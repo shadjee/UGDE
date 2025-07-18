@@ -1,0 +1,75 @@
+external_data_dir = '/path/to/BMC-FGCD'
+
+external_transforms = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], 
+                         [0.229, 0.224, 0.225])
+])
+
+external_dataset = datasets.ImageFolder(external_data_dir, transform=external_transforms)
+external_loader = DataLoader(external_dataset, batch_size=128, shuffle=False, num_workers=4)
+
+external_class_names = external_dataset.classes  # These will be different from MLL
+
+# Reload models with matching architecture
+def load_model_mobilenet(path):
+    model = models.mobilenet_v3_large(pretrained=False)
+    model.classifier[3] = nn.Linear(model.classifier[3].in_features, 21)  # same output as trained
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model
+
+def load_model_efficientnet(path):
+    model = EfficientNet.from_name('efficientnet-b0')
+    model._fc = nn.Linear(model._fc.in_features, 21)
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model
+
+def load_model_shufflenet(path):
+    model = models.shufflenet_v2_x1_0(pretrained=False)
+    model.fc = nn.Linear(model.fc.in_features, 21)
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model
+
+# Load all base models
+model1 = load_model_mobilenet('model_1.pth')
+model2 = load_model_efficientnet('model_2.pth')
+model3 = load_model_shufflenet('model_3.pth')
+
+models_list = [model1, model2, model3]
+
+# Enable MC Dropout for uncertainty estimation
+def enable_mc_dropout(model):
+    for m in model.modules():
+        if isinstance(m, nn.Dropout):
+            m.train()
+
+for m in models_list:
+    enable_mc_dropout(m)
+from sklearn.metrics import classification_report, confusion_matrix
+
+external_preds, external_labels, external_probs = [], [], []
+
+with torch.no_grad():
+    for inputs, labels in external_loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+        preds, probs, _ = uncertainty_guided_attention_ensemble(models_list, inputs, n_samples=20)
+        external_preds.extend(preds.cpu().numpy())
+        external_labels.extend(labels.cpu().numpy())
+        external_probs.append(probs.cpu().numpy())
+
+external_probs = np.concatenate(external_probs, axis=0)
+
+# Generate report
+print("\n🧪 External Validation on BMC-FGCD")
+print(classification_report(external_labels, external_preds, target_names=external_class_names))
+
+plot_confusion_matrix(external_labels, external_preds, external_class_names, title="External Validation Confusion Matrix")
+plot_calibration_curve(external_labels, external_probs, title="External Calibration Curve")
