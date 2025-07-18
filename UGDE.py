@@ -237,61 +237,6 @@ def plot_calibration_curve(y_true, y_probs, title='Calibration Curve'):
     plt.title(title); plt.grid(); plt.legend(); plt.show()
 
 
-def visualize_gradcam_uncertainty(model, models, dataset, class_names, num_classes=9):
-    from pytorch_grad_cam import GradCAM
-    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-    from pytorch_grad_cam.utils.image import show_cam_on_image
-
-    model.eval()
-    cam = GradCAM(model=model, target_layers=[model.features[-1]])
-    plt.figure(figsize=(12, 4 * num_classes))
-
-    shown_classes = set()
-    for img_idx, (img, label) in enumerate(dataset):
-        if label in shown_classes:
-            continue
-        shown_classes.add(label)
-
-        # Prepare input
-        input_tensor = img.unsqueeze(0).to(device)
-
-        # Get prediction and entropy
-        with torch.no_grad():
-            class_idx = torch.argmax(model(input_tensor)).item()
-            _, _, entropy_map = uncertainty_guided_attention_ensemble(models, input_tensor, n_samples=mc_samples)
-        entropy_val = entropy_map.detach().cpu().numpy()[0]
-
-        # Generate Grad-CAM
-        grayscale_cam = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(class_idx)])
-        grayscale_cam = grayscale_cam[0, :]  # remove batch dimension
-
-        # Normalize input image for overlay
-        input_image = input_tensor[0].cpu().permute(1, 2, 0).numpy()
-        input_image = (input_image - input_image.min()) / (input_image.max() - input_image.min())
-
-        # Generate CAM overlay
-        cam_img = show_cam_on_image(input_image, grayscale_cam, use_rgb=True)
-
-        row = label
-        plt.subplot(num_classes, 3, row * 3 + 1)
-        plt.imshow(input_image)
-        plt.title(f'Original - {class_names[label]}')
-        plt.axis('off')
-
-        plt.subplot(num_classes, 3, row * 3 + 2)
-        plt.imshow(cam_img)
-        plt.title(f'Grad-CAM\nEntropy: {entropy_val:.3f}')
-        plt.axis('off')
-
-        plt.subplot(num_classes, 3, row * 3 + 3)
-        plt.text(0.1, 0.5, f'Predicted: {class_names[class_idx]}\nEntropy: {entropy_val:.3f}', fontsize=12)
-        plt.axis('off')
-
-        if len(shown_classes) == num_classes:
-            break
-
-    plt.tight_layout()
-    plt.show()
 
 
 # ===== MAIN =====
